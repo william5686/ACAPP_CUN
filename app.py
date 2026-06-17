@@ -6,10 +6,13 @@ st.set_page_config(page_title="Comparador de ACA's", layout="wide")
 
 COLS_NUM = ["Porcentaje Ocupacion Aula", "Capacidad", "Num_inscritos", "Inscritos_neto"]
 COL_KEY = "Id_grupo"
+COL_PERIODO = "Cod_periodo"
 COL_AREA = "Nom_unidad"
+COL_MATERIA = "Nom_materia"
+COLS_DETALLE = ["Num_grupo", "Nom_sede", "Nom_aula", "Dia", "Hora_inicial", "Hora_final", "Nom_largo"]
 
 st.title("📊 Comparador de ACA's Consolidados")
-st.caption("Carga el Excel consolidado (una hoja por fecha) y compara dos cortes por área.")
+st.caption("Carga el Excel consolidado (una hoja por fecha) y compara dos cortes filtrando por período, área y asignatura.")
 
 uploaded = st.file_uploader("Sube el archivo ACA (.xlsx)", type=["xlsx"])
 
@@ -31,6 +34,13 @@ def load_excel(file_bytes):
     return sheets
 
 
+def aggregate(df):
+    """Agrupa por Id_grupo en caso de filas repetidas (ej. una fila por inscrito)."""
+    agg_cols = {c: "first" for c in df.columns if c not in COLS_NUM + [COL_KEY]}
+    agg_cols.update({c: "max" for c in COLS_NUM if c in df.columns})
+    return df.groupby(COL_KEY, as_index=False).agg(agg_cols)
+
+
 if uploaded is not None:
     sheets = load_excel(uploaded)
     st.session_state.data = sheets
@@ -41,33 +51,55 @@ if st.session_state.data:
     sheets = st.session_state.data
     names = st.session_state.sheet_names
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2 = st.columns(2)
     with col1:
         fecha_1 = st.selectbox("Fecha 1 (base)", names, index=0)
     with col2:
         fecha_2 = st.selectbox("Fecha 2 (comparar contra)", names, index=len(names) - 1)
-    with col3:
-        df_ref = sheets[fecha_1]
-        areas = ["(Todas las áreas)"] + sorted(df_ref[COL_AREA].dropna().unique().tolist())
-        area_sel = st.selectbox("Área (Nom_unidad)", areas, index=0)
 
     if fecha_1 == fecha_2:
         st.warning("Selecciona dos fechas distintas para comparar.")
         st.stop()
 
-    df1 = sheets[fecha_1].copy()
-    df2 = sheets[fecha_2].copy()
+    df1_full = sheets[fecha_1].copy()
+    df2_full = sheets[fecha_2].copy()
 
-    if area_sel != "(Todas las áreas)":
-        df1 = df1[df1[COL_AREA] == area_sel]
-        df2 = df2[df2[COL_AREA] == area_sel]
+    # Universo de referencia para construir las listas de filtros: unión de ambas fechas
+    df_ref = pd.concat([df1_full, df2_full], ignore_index=True)
 
-    # Agregar por Id_grupo en caso de filas repetidas (ej. una fila por inscrito)
-    agg_cols = {c: "first" for c in df1.columns if c not in COLS_NUM + [COL_KEY]}
-    agg_cols.update({c: "max" for c in COLS_NUM if c in df1.columns})
+    st.divider()
+    st.markdown("**Filtros (en cascada): Período → Área → Asignatura**")
+    f1, f2, f3 = st.columns(3)
 
-    g1 = df1.groupby(COL_KEY, as_index=False).agg(agg_cols)
-    g2 = df2.groupby(COL_KEY, as_index=False).agg(agg_cols)
+    with f1:
+        periodos = sorted(df_ref[COL_PERIODO].dropna().unique().tolist())
+        periodo_sel = st.selectbox("1️⃣ Período (Cod_periodo)", periodos)
+
+    df_ref_periodo = df_ref[df_ref[COL_PERIODO] == periodo_sel]
+
+    with f2:
+        areas = sorted(df_ref_periodo[COL_AREA].dropna().unique().tolist())
+        area_sel = st.selectbox("2️⃣ Área (Nom_unidad)", areas)
+
+    df_ref_area = df_ref_periodo[df_ref_periodo[COL_AREA] == area_sel]
+
+    with f3:
+        materias = sorted(df_ref_area[COL_MATERIA].dropna().unique().tolist())
+        materia_sel = st.selectbox("3️⃣ Asignatura (Nom_materia)", materias)
+
+    # Aplicar los 3 filtros a cada fecha
+    def filtrar(df):
+        return df[
+            (df[COL_PERIODO] == periodo_sel)
+            & (df[COL_AREA] == area_sel)
+            & (df[COL_MATERIA] == materia_sel)
+        ]
+
+    df1 = filtrar(df1_full)
+    df2 = filtrar(df2_full)
+
+    g1 = aggregate(df1)
+    g2 = aggregate(df2)
 
     ids1 = set(g1[COL_KEY])
     ids2 = set(g2[COL_KEY])
@@ -77,7 +109,12 @@ if st.session_state.data:
     comunes = ids1 & ids2
 
     st.divider()
-    st.subheader(f"Resumen: {fecha_1} → {fecha_2}" + (f"  ·  Área: {area_sel}" if area_sel != "(Todas las áreas)" else ""))
+    st.subheader(f"{materia_sel}")
+    st.caption(f"{area_sel}  ·  Período {periodo_sel}  ·  {fecha_1} → {fecha_2}")
+
+    if len(ids1) == 0 and len(ids2) == 0:
+        st.warning("No hay grupos para esta combinación de período, área y asignatura en ninguna de las dos fechas.")
+        st.stop()
 
     m1, m2, m3, m4 = st.columns(4)
     m1.metric("Grupos en común", len(comunes))
@@ -85,58 +122,79 @@ if st.session_state.data:
     m3.metric("Grupos que desaparecieron", len(desaparecidos))
     m4.metric("Total grupos (fecha 2)", len(ids2))
 
-    # Totales agregados
-    st.markdown("**Totales agregados (sobre grupos en común)**")
-    base = g1[g1[COL_KEY].isin(comunes)].set_index(COL_KEY)
-    comp = g2[g2[COL_KEY].isin(comunes)].set_index(COL_KEY)
+    base = g1.set_index(COL_KEY)
+    comp = g2.set_index(COL_KEY)
 
-    tot_cols = st.columns(len(COLS_NUM))
-    for i, c in enumerate(COLS_NUM):
-        if c in base.columns:
-            t1 = base[c].sum()
-            t2 = comp[c].sum()
-            delta = t2 - t1
-            tot_cols[i].metric(c, f"{t2:,.1f}", f"{delta:+,.1f}")
+    # Totales agregados (inscritos e inscritos neto) sobre grupos en comun
+    st.markdown("**Totales — Inscritos e Inscritos neto (grupos en común)**")
+    foco_cols = ["Num_inscritos", "Inscritos_neto"]
+    tot_cols = st.columns(len(foco_cols))
+    for i, c in enumerate(foco_cols):
+        t1 = base.loc[list(comunes), c].sum() if comunes else 0
+        t2 = comp.loc[list(comunes), c].sum() if comunes else 0
+        delta = t2 - t1
+        tot_cols[i].metric(c, f"{t2:,.0f}", f"{delta:+,.0f}")
 
     st.divider()
-    st.subheader("Detalle por grupo (cambios)")
+    st.subheader("Detalle por grupo")
 
-    merged = base[COLS_NUM + ["Nom_materia", COL_AREA, "Nom_sede"]].add_suffix("_1").join(
-        comp[COLS_NUM + ["Nom_materia", COL_AREA, "Nom_sede"]].add_suffix("_2"),
-        how="inner"
-    )
+    cols_join = ["Num_inscritos", "Inscritos_neto"] + COLS_DETALLE
+    cols_join_1 = [c for c in cols_join if c in base.columns]
+    cols_join_2 = [c for c in cols_join if c in comp.columns]
 
-    for c in COLS_NUM:
-        merged[f"{c}_delta"] = merged[f"{c}_2"] - merged[f"{c}_1"]
+    if comunes:
+        merged = base.loc[list(comunes), cols_join_1].add_suffix("_1").join(
+            comp.loc[list(comunes), cols_join_2].add_suffix("_2"),
+            how="inner"
+        )
+        merged["Num_inscritos_delta"] = merged["Num_inscritos_2"] - merged["Num_inscritos_1"]
+        merged["Inscritos_neto_delta"] = merged["Inscritos_neto_2"] - merged["Inscritos_neto_1"]
 
-    show_only_changes = st.checkbox("Mostrar solo grupos con cambios", value=True)
+        show_only_changes = st.checkbox("Mostrar solo grupos con cambios en inscritos", value=False)
+        if show_only_changes:
+            mask = (merged[["Num_inscritos_delta", "Inscritos_neto_delta"]].fillna(0) != 0).any(axis=1)
+            view = merged[mask]
+        else:
+            view = merged
 
-    delta_cols = [f"{c}_delta" for c in COLS_NUM]
-    if show_only_changes:
-        mask = (merged[delta_cols].fillna(0) != 0).any(axis=1)
-        view = merged[mask]
+        display_cols = [
+            "Num_grupo_2", "Nom_sede_2", "Nom_aula_2", "Dia_2", "Hora_inicial_2", "Hora_final_2",
+            "Num_inscritos_1", "Num_inscritos_2", "Num_inscritos_delta",
+            "Inscritos_neto_1", "Inscritos_neto_2", "Inscritos_neto_delta",
+        ]
+        display_cols = [c for c in display_cols if c in view.columns]
+
+        view_display = view.reset_index()[[COL_KEY] + display_cols]
+        rename_map = {
+            "Num_grupo_2": "Grupo", "Nom_sede_2": "Sede", "Nom_aula_2": "Salón",
+            "Dia_2": "Día", "Hora_inicial_2": "Hora inicio", "Hora_final_2": "Hora fin",
+            "Num_inscritos_1": f"Inscritos ({fecha_1})", "Num_inscritos_2": f"Inscritos ({fecha_2})",
+            "Num_inscritos_delta": "Inscritos (Δ)",
+            "Inscritos_neto_1": f"Inscritos neto ({fecha_1})", "Inscritos_neto_2": f"Inscritos neto ({fecha_2})",
+            "Inscritos_neto_delta": "Inscritos neto (Δ)",
+        }
+        view_display = view_display.rename(columns=rename_map)
+
+        st.dataframe(view_display, use_container_width=True, height=420)
+
+        csv = view_display.to_csv(index=False).encode("utf-8")
+        st.download_button(
+            "⬇️ Descargar detalle (CSV)", csv,
+            file_name=f"detalle_{materia_sel[:30]}_{fecha_1}_vs_{fecha_2}.csv",
+            mime="text/csv",
+        )
     else:
-        view = merged
-
-    display_cols = [f"Nom_materia_2", f"{COL_AREA}_2", "Nom_sede_2"] + \
-        [item for c in COLS_NUM for item in (f"{c}_1", f"{c}_2", f"{c}_delta")]
-
-    view_display = view.reset_index()[[COL_KEY] + display_cols]
-    view_display.columns = [COL_KEY, "Materia", "Área", "Sede"] + \
-        [item for c in COLS_NUM for item in (f"{c} ({fecha_1})", f"{c} ({fecha_2})", f"{c} (Δ)")]
-
-    st.dataframe(view_display, use_container_width=True, height=450)
-
-    csv = view_display.to_csv(index=False).encode("utf-8")
-    st.download_button("⬇️ Descargar comparación (CSV)", csv, file_name=f"comparacion_{fecha_1}_vs_{fecha_2}.csv", mime="text/csv")
+        st.info("No hay grupos en común entre las dos fechas para esta asignatura.")
 
     if nuevos:
         with st.expander(f"Ver grupos nuevos ({len(nuevos)})"):
-            st.dataframe(g2[g2[COL_KEY].isin(nuevos)], use_container_width=True)
+            cols_show = [c for c in [COL_KEY, "Num_grupo", "Nom_sede", "Nom_aula", "Num_inscritos", "Inscritos_neto"] if c in g2.columns]
+            st.dataframe(g2[g2[COL_KEY].isin(nuevos)][cols_show], use_container_width=True)
 
     if desaparecidos:
         with st.expander(f"Ver grupos que desaparecieron ({len(desaparecidos)})"):
-            st.dataframe(g1[g1[COL_KEY].isin(desaparecidos)], use_container_width=True)
+            cols_show = [c for c in [COL_KEY, "Num_grupo", "Nom_sede", "Nom_aula", "Num_inscritos", "Inscritos_neto"] if c in g1.columns]
+            st.dataframe(g1[g1[COL_KEY].isin(desaparecidos)][cols_show], use_container_width=True)
 
 else:
     st.info("Sube un archivo .xlsx para comenzar.")
