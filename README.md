@@ -7,13 +7,17 @@ sin tener que filtrar manualmente en Excel.
 
 1. Subes el Excel consolidado (el archivo donde cada hoja es una fecha, ej. "01 Junio", "02 Junio", etc.).
 2. Eliges **Fecha 1** y **Fecha 2** a comparar.
-3. Opcionalmente filtras por **Área** (columna `Nom_unidad`, ej. "CIENCIAS BÁSICAS VIRTUAL").
-4. La app te muestra:
+3. Filtras en cascada, en este orden:
+   1. **Período** (`Cod_periodo`, ej. "2026B", "26V03").
+   2. **Área** (`Nom_unidad`, ej. "CIENCIAS BÁSICAS VIRTUAL") — solo muestra áreas disponibles en el período elegido.
+   3. **Asignatura** (`Nom_materia`) — solo muestra materias disponibles en esa área + período.
+4. La app te muestra, para los grupos de esa asignatura específica:
    - Grupos nuevos (aparecieron en la fecha 2 pero no en la fecha 1).
    - Grupos que desaparecieron.
-   - Cambios en **Ocupación de aula**, **Capacidad**, **Inscritos** e **Inscritos neto** por grupo.
-   - Totales agregados con la diferencia (delta) entre las dos fechas.
-   - Botón para descargar la comparación en CSV.
+   - Totales de **Inscritos** e **Inscritos neto** con la diferencia (delta) entre las dos fechas.
+   - Detalle por grupo: número de grupo, sede, salón, día y horario, además de inscritos/inscritos neto en ambas fechas y su delta.
+   - Casilla para mostrar solo los grupos que tuvieron cambios.
+   - Botón para descargar el detalle en CSV.
 
 ## Cómo correrlo localmente
 
