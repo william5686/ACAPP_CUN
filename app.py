@@ -68,7 +68,7 @@ if st.session_state.data:
     df_ref = pd.concat([df1_full, df2_full], ignore_index=True)
 
     st.divider()
-    st.markdown("**Filtros (en cascada): Período → Área → Asignatura**")
+    st.markdown("**Filtros**: Período → Área (en cascada) y Asignatura (todas, independiente)")
     f1, f2, f3 = st.columns(3)
 
     with f1:
@@ -81,10 +81,10 @@ if st.session_state.data:
         areas = sorted(df_ref_periodo[COL_AREA].dropna().unique().tolist())
         area_sel = st.selectbox("2️⃣ Área (Nom_unidad)", areas)
 
-    df_ref_area = df_ref_periodo[df_ref_periodo[COL_AREA] == area_sel]
-
     with f3:
-        materias = sorted(df_ref_area[COL_MATERIA].dropna().unique().tolist())
+        # A diferencia de Área (que depende del Período), Asignatura siempre muestra
+        # TODAS las materias del archivo, sin que el Período/Área la filtren primero.
+        materias = sorted(df_ref[COL_MATERIA].dropna().unique().tolist())
         materia_sel = st.selectbox("3️⃣ Asignatura (Nom_materia)", materias)
 
     # Aplicar los 3 filtros a cada fecha
