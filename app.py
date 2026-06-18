@@ -68,7 +68,7 @@ if st.session_state.data:
     df_ref = pd.concat([df1_full, df2_full], ignore_index=True)
 
     st.divider()
-    st.markdown("**Filtros**: Período → Área (en cascada) y Asignatura (todas, independiente)")
+    st.markdown("**Filtros**: Período → Área (en cascada, obligatorios) y Asignatura (opcional)")
     f1, f2, f3 = st.columns(3)
 
     with f1:
@@ -84,16 +84,19 @@ if st.session_state.data:
     with f3:
         # A diferencia de Área (que depende del Período), Asignatura siempre muestra
         # TODAS las materias del archivo, sin que el Período/Área la filtren primero.
-        materias = sorted(df_ref[COL_MATERIA].dropna().unique().tolist())
-        materia_sel = st.selectbox("3️⃣ Asignatura (Nom_materia)", materias)
+        # Es opcional: por defecto no se aplica este filtro.
+        PLACEHOLDER_MATERIA = "— Seleccione una opción si lo desea —"
+        materias = [PLACEHOLDER_MATERIA] + sorted(df_ref[COL_MATERIA].dropna().unique().tolist())
+        materia_sel = st.selectbox("3️⃣ Asignatura (Nom_materia) — opcional", materias)
 
-    # Aplicar los 3 filtros a cada fecha
+    filtro_materia_activo = materia_sel != PLACEHOLDER_MATERIA
+
+    # Aplicar Período + Área siempre; Asignatura solo si el usuario eligió una
     def filtrar(df):
-        return df[
-            (df[COL_PERIODO] == periodo_sel)
-            & (df[COL_AREA] == area_sel)
-            & (df[COL_MATERIA] == materia_sel)
-        ]
+        mask = (df[COL_PERIODO] == periodo_sel) & (df[COL_AREA] == area_sel)
+        if filtro_materia_activo:
+            mask &= (df[COL_MATERIA] == materia_sel)
+        return df[mask]
 
     df1 = filtrar(df1_full)
     df2 = filtrar(df2_full)
@@ -109,7 +112,10 @@ if st.session_state.data:
     comunes = ids1 & ids2
 
     st.divider()
-    st.subheader(f"{materia_sel}")
+    if filtro_materia_activo:
+        st.subheader(f"{materia_sel}")
+    else:
+        st.subheader("Todos los grupos")
     st.caption(f"{area_sel}  ·  Período {periodo_sel}  ·  {fecha_1} → {fecha_2}")
 
     if len(ids1) == 0 and len(ids2) == 0:
@@ -138,7 +144,7 @@ if st.session_state.data:
     st.divider()
     st.subheader("Detalle por grupo")
 
-    cols_join = ["Num_inscritos", "Inscritos_neto"] + COLS_DETALLE
+    cols_join = ["Num_inscritos", "Inscritos_neto", COL_MATERIA] + COLS_DETALLE
     cols_join_1 = [c for c in cols_join if c in base.columns]
     cols_join_2 = [c for c in cols_join if c in comp.columns]
 
@@ -157,7 +163,7 @@ if st.session_state.data:
         else:
             view = merged
 
-        display_cols = [
+        display_cols = (["Nom_materia_2"] if not filtro_materia_activo else []) + [
             "Num_grupo_2", "Nom_sede_2", "Nom_aula_2", "Dia_2", "Hora_inicial_2", "Hora_final_2",
             "Num_inscritos_1", "Num_inscritos_2", "Num_inscritos_delta",
             "Inscritos_neto_1", "Inscritos_neto_2", "Inscritos_neto_delta",
@@ -166,6 +172,7 @@ if st.session_state.data:
 
         view_display = view.reset_index()[[COL_KEY] + display_cols]
         rename_map = {
+            "Nom_materia_2": "Asignatura",
             "Num_grupo_2": "Grupo", "Nom_sede_2": "Sede", "Nom_aula_2": "Salón",
             "Dia_2": "Día", "Hora_inicial_2": "Hora inicio", "Hora_final_2": "Hora fin",
             "Num_inscritos_1": f"Inscritos ({fecha_1})", "Num_inscritos_2": f"Inscritos ({fecha_2})",
@@ -177,23 +184,26 @@ if st.session_state.data:
 
         st.dataframe(view_display, use_container_width=True, height=420)
 
+        nombre_archivo = materia_sel[:30] if filtro_materia_activo else "todos"
         csv = view_display.to_csv(index=False).encode("utf-8")
         st.download_button(
             "⬇️ Descargar detalle (CSV)", csv,
-            file_name=f"detalle_{materia_sel[:30]}_{fecha_1}_vs_{fecha_2}.csv",
+            file_name=f"detalle_{nombre_archivo}_{fecha_1}_vs_{fecha_2}.csv",
             mime="text/csv",
         )
     else:
-        st.info("No hay grupos en común entre las dos fechas para esta asignatura.")
+        st.info("No hay grupos en común entre las dos fechas para este filtro.")
+
+    cols_extra = [] if filtro_materia_activo else ["Nom_materia"]
 
     if nuevos:
         with st.expander(f"Ver grupos nuevos ({len(nuevos)})"):
-            cols_show = [c for c in [COL_KEY, "Num_grupo", "Nom_sede", "Nom_aula", "Num_inscritos", "Inscritos_neto"] if c in g2.columns]
+            cols_show = [c for c in [COL_KEY] + cols_extra + ["Num_grupo", "Nom_sede", "Nom_aula", "Num_inscritos", "Inscritos_neto"] if c in g2.columns]
             st.dataframe(g2[g2[COL_KEY].isin(nuevos)][cols_show], use_container_width=True)
 
     if desaparecidos:
         with st.expander(f"Ver grupos que desaparecieron ({len(desaparecidos)})"):
-            cols_show = [c for c in [COL_KEY, "Num_grupo", "Nom_sede", "Nom_aula", "Num_inscritos", "Inscritos_neto"] if c in g1.columns]
+            cols_show = [c for c in [COL_KEY] + cols_extra + ["Num_grupo", "Nom_sede", "Nom_aula", "Num_inscritos", "Inscritos_neto"] if c in g1.columns]
             st.dataframe(g1[g1[COL_KEY].isin(desaparecidos)][cols_show], use_container_width=True)
 
 else:
